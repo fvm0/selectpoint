@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Point Selector</title>
+    <style>
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        #svg-container {
+            border: 1px solid #ccc;
+            margin-top: 20px;
+            position: relative;
+            width: 75vw;
+            height: 85vh;
+        }
+
+        #coordinates-display {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 2px 5px;
+            border-radius: 3px;
+            display: none;
+        }
+
+        #points-display, #link-display {
+            margin-top: 20px;
+            white-space: pre-wrap;
+            max-width: 75vw;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            cursor: crosshair; /* Custom cursor */
+        }
+
+        #upload-label {
+            margin-top: 20px;
+            cursor: pointer;
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+
+        #upload-label:hover {
+            background-color: #0056b3;
+        }
+
+        #upload {
+            display: none;
+        }
+
+        #control-buttons {
+            margin-top: 20px;
+        }
+
+        #control-buttons button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #control-buttons button:hover {
+            background-color: #0056b3;
+        }
+
+        .point-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .point-item button {
+            margin-left: 10px;
+            padding: 5px 10px;
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .point-item button:hover {
+            background-color: #c82333;
+        }
+
+        .edit-input {
+            width: 50px;
+            margin-right: 10px;
+        }
+
+        .undo-redo-buttons {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+
+        .undo-redo-buttons button {
+            margin: 0 5px;
+            padding: 5px 10px;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+        }
+
+        .undo-redo-buttons button:hover {
+            background-color: #0056b3;
+        }
+
+        #link-mode-button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        #link-mode-button.active {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SVG Point Selector</h1>
+        <label for="upload" id="upload-label">Upload SVG</label>
+        <input type="file" id="upload" accept=".svg" />
+        <div class="undo-redo-buttons">
+            <button id="undo">&larr;</button>
+            <button id="redo">&rarr;</button>
+        </div>
+        <button id="link-mode-button">Enable Link Mode Click</button>
+        <div id="svg-container" class="crosshair-cursor"></div>
+        <div id="coordinates-display"></div>
+        <div id="points-display"></div>
+        <div id="control-buttons">
+            <button id="get-points">Get All Points</button>
+            <button id="clear-points">Clear All Points</button>
+            <button id="select-file">Select File</button>
+            <button id="save-data">Save Data</button>
+            <button id="select-object-file">Select Object File</button>
+            <button id="generate-object-file">Generate Object File</button>
+            <button id="select-db-file">Select DB File</button>
+        </div>
+        <div id="all-points-display"></div>
+        <div id="link-display"></div>
+    </div>
+    <script>
+        let points = [];
+        let links = [];
+        let pointIdCounter = 1; // Adjust this if you already have existing points
+        let history = [];
+        let redoStack = [];
+        let fileHandle;
+        let objectFileHandle;
+        let dbFileHandle;
+        let selectedPoint = null;
+        let isDragging = false;
+        let linkStartPoint = null;
+        let clickTimeout = null;
+        let linkMode = false;
+
+        document.getElementById('upload').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file && file.type === 'image/svg+xml') {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const svgContainer = document.getElementById('svg-container');
+                    svgContainer.innerHTML = e.target.result;
+                    const svgElement = svgContainer.querySelector('svg');
+                    const coordinatesDisplay = document.getElementById('coordinates-display');
+                    if (svgElement) {
+                        svgElement.setAttribute('viewBox', '0.469 0.006 1461.95 1149.136');
+                        svgElement.style.width = '100%';
+                        svgElement.style.height = '100%';
+                        svgElement.addEventListener('mousemove', function(event) {
+                            const point = getSVGCoordinates(svgElement, event);
+                            coordinatesDisplay.style.display = 'block';
+                            coordinatesDisplay.style.left = `${event.clientX + 5}px`;
+                            coordinatesDisplay.style.top = `${event.clientY + 5}px`;
+                            coordinatesDisplay.textContent = `x: ${point.x.toFixed(2)}, y: ${point.y.toFixed(2)}`;
+                            if (isDragging && selectedPoint) {
+                                movePoint(selectedPoint, point.x, point.y);
+                            }
+                        });
+                        svgElement.addEventListener('mouseleave', function() {
+                            coordinatesDisplay.style.display = 'none';
+                        });
+                        svgElement.addEventListener('mousedown', function(event) {
+                            const point = getSVGCoordinates(svgElement, event);
+                            const existingPoint = points.find(p => p.key === `${point.x.toFixed(2)},${point.y.toFixed(2)}`);
+                            if (!existingPoint) {
+                                const newPoint = {
+                                    id: `v${pointIdCounter++}`,
+                                    objectName: null,
+                                    cx: point.x.toFixed(2),
+                                    cy: point.y.toFixed(2),
+                                    key: `${point.x.toFixed(2)},${point.y.toFixed(2)}`
+                                };
+                                history.push({ action: 'add', type: 'point', data: newPoint });
+                                points.push(newPoint);
+                                displayPoint(newPoint);
+                                highlightPoint(svgElement, newPoint);
+                                redoStack = []; // Clear redo stack on new action
+                            }
+                        });
+                        svgElement.addEventListener('mouseup', function() {
+                            isDragging = false;
+                            selectedPoint = null;
+                        });
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        document.getElementById('link-mode-button').addEventListener('click', function() {
+            linkMode = !linkMode;
+            const button = document.getElementById('link-mode-button');
+            if (linkMode) {
+                button.textContent = 'Disable Link Mode Click';
+                button.classList.add('active');
+            } else {
+                button.textContent = 'Enable Link Mode Click';
+                button.classList.remove('active');
+                linkStartPoint = null; // Clear any selected point when exiting link mode
+            }
+        });
+
+        async function selectFile() {
+            [fileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: 'TypeScript Files',
+                        accept: {
+                            'text/typescript': ['.ts'],
+                        },
+                    },
+                ],
+                excludeAcceptAllOption: true,
+                multiple: false,
+            });
+        }
+
+        async function selectObjectFile() {
+            [objectFileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: 'TypeScript and TSX Files',
+                        accept: {
+                            'text/typescript': ['.tsx'],
+                        },
+                    },
+                ],
+                excludeAcceptAllOption: true,
+                multiple: false,
+            });
+        }
+
+        async function selectDbFile() {
+            [dbFileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: 'JSON Files',
+                        accept: {
+                            'application/json': ['.json'],
+                        },
+                    },
+                ],
+                excludeAcceptAllOption: true,
+                multiple: false,
+            });
+        }
+
+        async function saveToFile() {
+            if (!fileHandle) {
+                alert('Please select a file first.');
+                return;
+            }
+
+            const writable = await fileHandle.createWritable();
+            const data = `export interface VertexData {
+  id: string;
+  objectName: string | null;
+  cx: number;
+  cy: number;
+}
+
+export interface EdgeData {
+  id: string;
+  from: string;
+  to: string;
+}
+
+export interface GraphData {
+  vertices: VertexData[];
+  edges: EdgeData[];
+}
+
+export const graphData: GraphData = {
+  vertices: [
+    ${points.map(point => `    { id: '${point.id}', objectName: ${point.objectName ? `'${point.objectName}'` : 'null'}, cx: ${point.cx}, cy: ${point.cy} }`).join(',\n    ')}
+  ],
+  edges: [
+    ${links.map(link => `    { id: '${link.startPoint.id}_to_${link.endPoint.id}', from: '${link.startPoint.id}', to: '${link.endPoint.id}' }`).join(',\n    ')}
+  ]
+};`;
+            await writable.write(data);
+            await writable.close();
+        }
+
+        async function generateObjectFile() {
+            if (!objectFileHandle) {
+                alert('Please select an object file first.');
+                return;
+            }
+            const writable = await objectFileHandle.createWritable();
+            const data = `import React from 'react';
+
+interface ObjectsProps {
+  handleObjectClick: (e: React.MouseEvent<SVGPathElement>) => void;
+  className?: string;
+}
+
+const Objects: React.FC<ObjectsProps> = ({ handleObjectClick, className }) => {
+  return (
+    <g id="Objects">
+      ${points.filter(point => point.objectName).map(point => `<path id="${point.objectName}" className={\`\${className} object\`} onClick={handleObjectClick} />`).join('\n      ')}
+    </g>
+  );
+}
+
+export default Objects;`;
+            await writable.write(data);
+            await writable.close();
+
+            await updateDbFile();
+        }
+
+        async function updateDbFile() {
+            if (!dbFileHandle) {
+                alert('Please select a DB file first.');
+                return;
+            }
+
+            const file = await dbFileHandle.getFile();
+            const content = await file.text();
+            let db;
+            try {
+                db = JSON.parse(content);
+            } catch (error) {
+                alert('Failed to parse DB file content.');
+                return;
+            }
+
+            points.filter(point => point.objectName).forEach(point => {
+                const newObject = {
+                    id: generateId(),
+                    categoryId: generateCategoryId(),
+                    name: point.objectName,
+                    desc: ""
+                };
+                db.objects.push(newObject);
+            });
+
+            const writable = await dbFileHandle.createWritable();
+            await writable.write(JSON.stringify(db, null, 2));
+            await writable.close();
+        }
+
+        function generateId() {
+            return Math.random().toString(36).substr(2, 4);
+        }
+
+        function generateCategoryId() {
+            const categoryIds = ["93e0", "e928", "d21e", "87b0", "52f1"];
+            return categoryIds[Math.floor(Math.random() * categoryIds.length)];
+        }
+
+        function getSVGCoordinates(svg, event) {
+            const point = svg.createSVGPoint();
+            point.x = event.clientX;
+            point.y = event.clientY;
+            const screenCTM = svg.getScreenCTM();
+            return point.matrixTransform(screenCTM.inverse());
+        }
+
+        function displayPoint(point) {
+            const pointsDisplay = document.getElementById('points-display');
+            const pointItem = document.createElement('div');
+            pointItem.id = point.key;
+            pointItem.className = 'point-item';
+            pointItem.innerHTML = `
+                {id: ${point.id}, objectName: <input type="text" class="edit-input" value="${point.objectName ? point.objectName : ''}" onchange="updatePointInput('${point.key}', 'objectName', this.value)">, cx: <input type="number" class="edit-input" value="${point.cx}" onchange="updatePointInput('${point.key}', 'cx', this.value)">, cy: <input type="number" class="edit-input" value="${point.cy}" onchange="updatePointInput('${point.key}', 'cy', this.value)">} 
+                <button onclick="editPoint('${point.key}')">Edit</button> 
+                <button onclick="removePointById('${point.key}')">Remove</button>
+                <button onclick="startLink('${point.key}')">Link</button>`;
+            pointsDisplay.appendChild(pointItem);
+        }
+
+        function highlightPoint(svg, point) {
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', point.cx);
+            circle.setAttribute('cy', point.cy);
+            circle.setAttribute('r', 10);
+            circle.setAttribute('fill', 'red');
+            circle.classList.add('highlight-point');
+            circle.id = `circle-${point.key}`;
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('id', `text-${point.key}`);
+            text.setAttribute('x', point.cx);
+            text.setAttribute('y', parseFloat(point.cy) + 4);
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('fill', 'white');
+            text.setAttribute('font-size', '8px');
+            text.setAttribute('font-family', 'Arial, sans-serif');
+            text.textContent = point.id.replace('v', '');
+
+            svg.appendChild(circle);
+            svg.appendChild(text);
+
+            // Move the circle and text to the top of the layer
+            svg.appendChild(circle);
+            svg.appendChild(text);
+
+            circle.addEventListener('mousedown', function(event) {
+                clickTimeout = setTimeout(() => {
+                    selectedPoint = point;
+                    isDragging = true;
+                }, 200);
+                event.stopPropagation();
+            });
+
+            circle.addEventListener('mouseup', function(event) {
+                clearTimeout(clickTimeout);
+                if (!isDragging && linkMode) {
+                    if (linkStartPoint && linkStartPoint !== point) {
+                        displayLink(linkStartPoint, point);
+                        history.push({ action: 'add', type: 'link', data: { startPoint: linkStartPoint, endPoint: point } });
+                        redoStack = []; // Clear redo stack on new action
+                        linkStartPoint = null;
+                    } else {
+                        linkStartPoint = point;
+                    }
+                }
+                isDragging = false;
+                selectedPoint = null;
+                event.stopPropagation();
+            });
+
+            text.addEventListener('mousedown', function(event) {
+                event.stopPropagation();
+                clickTimeout = setTimeout(() => {
+                    selectedPoint = point;
+                    isDragging = true;
+                }, 200);
+            });
+
+            text.addEventListener('mouseup', function(event) {
+                event.stopPropagation();
+                clearTimeout(clickTimeout);
+                if (!isDragging && linkMode) {
+                    if (linkStartPoint && linkStartPoint !== point) {
+                        displayLink(linkStartPoint, point);
+                        history.push({ action: 'add', type: 'link', data: { startPoint: linkStartPoint, endPoint: point } });
+                        redoStack = []; // Clear redo stack on new action
+                        linkStartPoint = null;
+                    } else {
+                        linkStartPoint = point;
+                    }
+                }
+                isDragging = false;
+                selectedPoint = null;
+            });
+        }
+
+        function movePoint(point, x, y) {
+            point.cx = x.toFixed(2);
+            point.cy = y.toFixed(2);
+            updatePoint(point);
+            updateLinks(point);
+        }
+
+        function updatePoint(point) {
+            const circle = document.getElementById(`circle-${point.key}`);
+            if (circle) {
+                circle.setAttribute('cx', point.cx);
+                circle.setAttribute('cy', point.cy);
+            }
+
+            const text = document.getElementById(`text-${point.key}`);
+            if (text) {
+                text.setAttribute('x', point.cx);
+                text.setAttribute('y', parseFloat(point.cy) + 4);
+            }
+
+            const pointItem = document.getElementById(point.key);
+            if (pointItem) {
+                pointItem.innerHTML = `
+                    {id: ${point.id}, objectName: <input type="text" class="edit-input" value="${point.objectName ? point.objectName : ''}" onchange="updatePointInput('${point.key}', 'objectName', this.value)">, cx: <input type="number" class="edit-input" value="${point.cx}" onchange="updatePointInput('${point.key}', 'cx', this.value)">, cy: <input type="number" class="edit-input" value="${point.cy}" onchange="updatePointInput('${point.key}', 'cy', this.value)">} 
+                    <button onclick="editPoint('${point.key}')">Edit</button> 
+                    <button onclick="removePointById('${point.key}')">Remove</button>
+                    <button onclick="startLink('${point.key}')">Link</button>`;
+            }
+        }
+
+        function updatePointInput(pointKey, attr, value) {
+            const point = points.find(p => p.key === pointKey);
+            if (point) {
+                if (attr === 'objectName') {
+                    point[attr] = value;
+                } else {
+                    point[attr] = parseFloat(value).toFixed(2);
+                }
+                updatePoint(point);
+                updateLinks(point);
+            }
+        }
+
+        function updateLinks(point) {
+            links.forEach(link => {
+                if (link.startPoint.id === point.id) {
+                    link.line.setAttribute('x1', point.cx);
+                    link.line.setAttribute('y1', point.cy + 10); // Adjust to be at the edge of the circle
+                }
+                if (link.endPoint.id === point.id) {
+                    link.line.setAttribute('x2', point.cx);
+                    link.line.setAttribute('y2', point.cy + 10); // Adjust to be at the edge of the circle
+                }
+            });
+            updateLinkDisplay();
+        }
+
+        function removePoint(svg, index) {
+            const point = points[index];
+            points.splice(index, 1);
+
+            const circle = document.getElementById(`circle-${point.key}`);
+            if (circle) {
+                svg.removeChild(circle);
+            }
+
+            const text = document.getElementById(`text-${point.key}`);
+            if (text) {
+                svg.removeChild(text);
+            }
+
+            const pointItem = document.getElementById(point.key);
+            if (pointItem) {
+                pointItem.remove();
+            }
+
+            removeLinks(point.id);
+        }
+
+        function removePointById(pointKey) {
+            const index = points.findIndex(p => p.key === pointKey);
+            const svgElement = document.querySelector('#svg-container svg');
+            if (index !== -1) {
+                const point = points[index];
+                history.push({ action: 'remove', type: 'point', data: point, links: links.filter(link => link.startPoint.id === point.id || link.endPoint.id === point.id) });
+                removePoint(svgElement, index);
+                redoStack = []; // Clear redo stack on new action
+            }
+        }
+
+        function editPoint(pointKey) {
+            const index = points.findIndex(p => p.key === pointKey);
+            if (index !== -1) {
+                const pointItem = document.getElementById(pointKey);
+                if (pointItem) {
+                    const inputs = pointItem.querySelectorAll('.edit-input');
+                    inputs.forEach(input => input.focus());
+                }
+            }
+        }
+
+        function startLink(pointKey) {
+            const point = points.find(p => p.key === pointKey);
+            if (point) {
+                if (linkStartPoint && linkStartPoint !== point) {
+                    displayLink(linkStartPoint, point);
+                    history.push({ action: 'add', type: 'link', data: { startPoint: linkStartPoint, endPoint: point } });
+                    redoStack = []; // Clear redo stack on new action
+                    linkStartPoint = null;
+                } else {
+                    linkStartPoint = point;
+                }
+            }
+        }
+
+        function displayLink(startPoint, endPoint) {
+            const linkDisplay = document.getElementById('link-display');
+            const linkText = document.createElement('div');
+            linkText.textContent = `{id: "${startPoint.id}_to_${endPoint.id}", from: "${startPoint.id}", to: "${endPoint.id}"},`;
+            linkDisplay.appendChild(linkText);
+
+            const svgElement = document.querySelector('#svg-container svg');
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', startPoint.cx);
+            line.setAttribute('y1', startPoint.cy + 10); // Adjust to be at the edge of the circle
+            line.setAttribute('x2', endPoint.cx);
+            line.setAttribute('y2', endPoint.cy + 10); // Adjust to be at the edge of the circle
+            line.setAttribute('stroke', 'blue');
+            line.setAttribute('stroke-width', '2');
+            svgElement.appendChild(line);
+
+            links.push({ startPoint, endPoint, line });
+        }
+
+        function removeLinks(pointId) {
+            const svgElement = document.querySelector('#svg-container svg');
+            links = links.filter(link => {
+                if (link.startPoint.id === pointId || link.endPoint.id === pointId) {
+                    svgElement.removeChild(link.line);
+                    history.push({ action: 'remove', type: 'link', data: link });
+                    redoStack = []; // Clear redo stack on new action
+                    return false;
+                }
+                return true;
+            });
+            updateLinkDisplay();
+        }
+
+        function updateLinkDisplay() {
+            const linkDisplay = document.getElementById('link-display');
+            linkDisplay.innerHTML = '';
+            links.forEach(link => {
+                const linkText = document.createElement('div');
+                linkText.textContent = `Link: Point ${link.startPoint.id} (x: ${link.startPoint.cx}, y: ${link.startPoint.cy}) is linked to Point ${link.endPoint.id} (x: ${link.endPoint.cx}, y: ${link.endPoint.cy})`;
+                linkDisplay.appendChild(linkText);
+            });
+        }
+
+        document.getElementById('get-points').addEventListener('click', function() {
+            const allPointsDisplay = document.getElementById('all-points-display');
+            allPointsDisplay.innerHTML = '';
+            points.forEach(point => {
+                const pointText = document.createElement('div');
+                pointText.textContent = `{id: ${point.id}, objectName: ${point.objectName ? `'${point.objectName}'` : 'null'}, cx: ${point.cx}, cy: ${point.cy}},`;
+                allPointsDisplay.appendChild(pointText);
+            });
+        });
+
+        document.getElementById('clear-points').addEventListener('click', function() {
+            const svgElement = document.querySelector('#svg-container svg');
+            if (points.length > 0) {
+                history.push({ action: 'clear', type: 'points', data: [...points], links: [...links] });
+                while (points.length > 0) {
+                    removePoint(svgElement, 0);
+                }
+                pointIdCounter = 1;
+                redoStack = []; // Clear redo stack on new action
+            }
+        });
+
+        document.getElementById('undo').addEventListener('click', function() {
+            if (history.length > 0) {
+                const lastAction = history.pop();
+                redoStack.push(lastAction); // Add to redo stack
+                const svgElement = document.querySelector('#svg-container svg');
+                if (lastAction.action === 'add') {
+                    if (lastAction.type === 'point') {
+                        const pointIndex = points.findIndex(p => p.key === lastAction.data.key);
+                        if (pointIndex !== -1) {
+                            removePoint(svgElement, pointIndex);
+                            if (pointIdCounter > 1) {
+                                pointIdCounter--;
+                            }
+                        }
+                    } else if (lastAction.type === 'link') {
+                        const linkIndex = links.findIndex(link => link.startPoint.id === lastAction.data.startPoint.id && link.endPoint.id === lastAction.data.endPoint.id);
+                        if (linkIndex !== -1) {
+                            svgElement.removeChild(links[linkIndex].line);
+                            links.splice(linkIndex, 1);
+                        }
+                    }
+                } else if (lastAction.action === 'remove') {
+                    if (lastAction.type === 'point') {
+                        points.push(lastAction.data);
+                        displayPoint(lastAction.data);
+                        highlightPoint(svgElement, lastAction.data);
+                        lastAction.links.forEach(link => {
+                            displayLink(link.startPoint, link.endPoint);
+                        });
+                    } else if (lastAction.type === 'link') {
+                        displayLink(lastAction.data.startPoint, lastAction.data.endPoint);
+                    }
+                } else if (lastAction.action === 'clear') {
+                    lastAction.data.forEach(point => {
+                        points.push(point);
+                        displayPoint(point);
+                        highlightPoint(svgElement, point);
+                    });
+                    lastAction.links.forEach(link => {
+                        displayLink(link.startPoint, link.endPoint);
+                    });
+                    pointIdCounter = points.length + 1;
+                }
+            }
+        });
+
+        document.getElementById('redo').addEventListener('click', function() {
+            if (redoStack.length > 0) {
+                const lastUndoAction = redoStack.pop();
+                history.push(lastUndoAction); // Add back to history
+                const svgElement = document.querySelector('#svg-container svg');
+                if (lastUndoAction.action === 'add') {
+                    if (lastUndoAction.type === 'point') {
+                        points.push(lastUndoAction.data);
+                        displayPoint(lastUndoAction.data);
+                        highlightPoint(svgElement, lastUndoAction.data);
+                        pointIdCounter = Math.max(pointIdCounter, parseInt(lastUndoAction.data.id.replace('v', '')) + 1);
+                    } else if (lastUndoAction.type === 'link') {
+                        displayLink(lastUndoAction.data.startPoint, lastUndoAction.data.endPoint);
+                    }
+                } else if (lastUndoAction.action === 'remove') {
+                    if (lastUndoAction.type === 'point') {
+                        const pointIndex = points.findIndex(p => p.key === lastUndoAction.data.key);
+                        if (pointIndex !== -1) {
+                            removePoint(svgElement, pointIndex);
+                            if (pointIdCounter > 1) {
+                                pointIdCounter--;
+                            }
+                        }
+                    } else if (lastUndoAction.type === 'link') {
+                        const linkIndex = links.findIndex(link => link.startPoint.id === lastUndoAction.data.startPoint.id && link.endPoint.id === lastUndoAction.data.endPoint.id);
+                        if (linkIndex !== -1) {
+                            svgElement.removeChild(links[linkIndex].line);
+                            links.splice(linkIndex, 1);
+                        }
+                    }
+                } else if (lastUndoAction.action === 'clear') {
+                    while (points.length > 0) {
+                        removePoint(svgElement, 0);
+                    }
+                    pointIdCounter = 1;
+                }
+            }
+        });
+
+        document.getElementById('select-file').addEventListener('click', selectFile);
+        document.getElementById('save-data').addEventListener('click', saveToFile);
+        document.getElementById('select-object-file').addEventListener('click', selectObjectFile);
+        document.getElementById('generate-object-file').addEventListener('click', generateObjectFile);
+        document.getElementById('select-db-file').addEventListener('click', selectDbFile);
+
+        document.addEventListener('keydown', function(event) {
+            if (event.ctrlKey && (event.key === 'z' || event.key === 'Z')) {
+                document.getElementById('undo').click();
+            } else if (event.ctrlKey && (event.key === 'y' || event.key === 'Y')) {
+                document.getElementById('redo').click();
+            }
+        });
+    </script>
+</body>
+</html>
